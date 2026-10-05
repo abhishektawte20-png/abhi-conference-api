@@ -1,0 +1,14 @@
+:root { color-scheme: light dark; font: 13px/1.4 system-ui, sans-serif; }
+body { margin: 0; padding: 12px; }
+h2 { font-size: 13px; margin: 16px 0 6px; }
+label { display: block; margin: 6px 0; }
+input, select { width: 100%; box-sizing: border-box; margin-top: 2px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+button { padding: 5px 10px; cursor: pointer; }
+button.primary { background: #1a73e8; color: #fff; border: 0; border-radius: 4px; }
+.bar { display: flex; gap: 6px; margin-bottom: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 6px 0; }
+th, td { border-bottom: 1px solid #8884; padding: 3px 4px; text-align: left; vertical-align: top; }
+td input { margin: 0; }
+.found { color: #188038; } .low { color: #b06000; } .none, .error { color: #c5221f; }
+@media (prefers-color-scheme: dark) { .found { color: #81c995; } .low { color: #fdd663; } .none, .error { color: #f28b82; } }

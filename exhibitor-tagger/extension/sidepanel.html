@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Exhibitor Tagger</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <details id="settings">
+    <summary>Settings</summary>
+    <label>Proxy URL <input id="proxyUrl" placeholder="http://localhost:8787"></label>
+    <label>Proxy token <input id="proxyToken" type="password"></label>
+    <button id="saveSettings">Save</button>
+  </details>
+
+  <section>
+    <h2>1. Upload</h2>
+    <input type="file" id="file" accept=".xlsx,.xls,.csv">
+    <label id="sheetRow" hidden>Sheet <select id="sheet"></select></label>
+  </section>
+
+  <section id="mapSection" hidden>
+    <h2>2. Map columns</h2>
+    <label>First data row <input id="startRow" type="number" min="1" value="1"></label>
+    <div class="grid">
+      <label>Company name <select id="mapName"></select></label>
+      <label>Website <select id="mapWebsite"></select></label>
+      <label>Country <select id="mapCountry"></select></label>
+      <label>Description <select id="mapDescription"></select></label>
+    </div>
+    <table id="preview"></table>
+    <button id="load" class="primary">Load companies</button>
+  </section>
+
+  <section id="resultsSection" hidden>
+    <h2>3. Enrich</h2>
+    <div class="bar">
+      <button id="enrich" class="primary">Find missing websites</button>
+      <button id="stop" hidden>Stop</button>
+      <button id="export">Export CSV</button>
+    </div>
+    <p id="status"></p>
+    <table id="results"></table>
+  </section>
+
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
