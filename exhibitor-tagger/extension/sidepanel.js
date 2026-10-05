@@ -1,4 +1,6 @@
 import { analyzeSheet, extractCompanies, normalizeWebsite } from './lib/mapping.js';
+import { matchCompany, scrubTagged } from './lib/match.js';
+import { eventIdFromUrl, findRtsTab, rtsApi } from './lib/rts-client.js';
 
 const $ = (id) => document.getElementById(id);
 const BATCH = 10;
@@ -8,6 +10,8 @@ let workbook = null;
 let rows = [];
 let companies = [];
 let stopRequested = false;
+let scrub = [];
+let taggedTotal = 0;
 
 // ---- settings ----
 chrome.storage.local.get(['proxyUrl', 'proxyToken']).then(({ proxyUrl, proxyToken }) => {
@@ -71,6 +75,8 @@ $('load').onclick = () => {
   const sheetName = workbook.SheetNames[$('sheet').value || 0];
   companies = extractCompanies(rows, currentMap(), sheetName).map((c) => ({ ...c, status: c.website ? 'given' : 'pending', confidence: c.website ? 1 : 0, reason: '' }));
   $('resultsSection').hidden = false;
+  $('rtsSection').hidden = false;
+  detectEventId();
   renderResults();
 };
 
@@ -114,6 +120,7 @@ $('enrich').onclick = async () => {
   $('enrich').disabled = false;
   $('stop').hidden = true;
   setStatus(stopRequested ? `Stopped at ${done} of ${todo.length}.` : `Done. ${summary()}`);
+  persist();
 };
 
 const summary = () => {
@@ -124,14 +131,15 @@ const summary = () => {
 
 function renderResults() {
   $('results').innerHTML =
-    '<tr><th>Company</th><th>Website</th><th>Status</th><th>QA</th></tr>' +
+    '<tr><th>Company</th><th>Website</th><th>Status</th><th>QA</th><th>RTS</th></tr>' +
     companies
       .map(
         (c, i) =>
           `<tr><td>${esc(c.name)}<br><small>${esc(c.country)}</small></td>` +
           `<td><input data-i="${i}" value="${esc(c.website)}"></td>` +
           `<td class="${c.status}" title="${esc(c.reason)}">${c.status}${c.status === 'found' || c.status === 'low' ? ` ${Math.round(c.confidence * 100)}%` : ''}</td>` +
-          `<td class="${c.qa?.verdict ?? ''}" title="${esc(c.qa?.reasons.join('; ') ?? '')}">${esc(c.qa?.verdict ?? '')}</td></tr>`,
+          `<td class="${c.qa?.verdict ?? ''}" title="${esc(c.qa?.reasons.join('; ') ?? '')}">${esc(c.qa?.verdict ?? '')}</td>` +
+          `<td class="${c.rts?.status ?? ''}" title="${esc(rtsTitle(c.rts))}">${c.rts ? `${c.rts.status.replace('_', ' ')}${c.rts.entityName ? `: ${esc(c.rts.entityName)}` : ''}` : ''}</td></tr>`,
       )
       .join('');
   $('results').querySelectorAll('input').forEach((input) => {
@@ -146,10 +154,130 @@ function renderResults() {
   setStatus(summary());
 }
 
+// ---- RTS (read-only) ----
+async function detectEventId() {
+  if ($('eventId').value) return;
+  const tab = await findRtsTab();
+  if (tab) $('eventId').value = eventIdFromUrl(tab.url);
+}
+
+async function connect() {
+  const eventId = $('eventId').value.trim();
+  const tab = await findRtsTab();
+  if (!tab) throw new Error('Open the event page in RTS in this browser first.');
+  if (!/^\d+$/.test(eventId)) throw new Error('Enter the numeric conference event ID.');
+  return { eventId, api: rtsApi(tab.id, eventId) };
+}
+
+const rtsTitle = (r) => (r ? `${r.reasons?.join('; ') ?? ''}${r.score ? ` (score ${r.score})` : ''}` : '');
+const rtsStatus = (msg) => ($('rtsStatus').textContent = msg);
+
+$('scrub').onclick = async () => {
+  try {
+    const { api } = await connect();
+    rtsStatus('Reading the event\'s tagged list…');
+    const tagged = await api.allTagged();
+    taggedTotal = tagged.totalCount;
+    scrub = scrubTagged(tagged.entries, companies);
+    renderRtsSummary();
+    rtsStatus(`Scrubbed ${scrub.length} tagged entities.`);
+    persist();
+  } catch (err) {
+    rtsStatus(err.message);
+  }
+};
+
+$('stopRts').onclick = () => (stopRequested = true);
+
+$('match').onclick = async () => {
+  try {
+    const { api } = await connect();
+    rtsStatus('Reading the event\'s tagged list…');
+    const tagged = (await api.allTagged()).entries;
+    const todo = companies.filter((c) => !c.rts && c.name);
+    stopRequested = false;
+    $('match').disabled = true;
+    $('stopRts').hidden = false;
+    let done = 0;
+    const queue = [...todo];
+    const worker = async () => {
+      while (queue.length && !stopRequested) {
+        const c = queue.shift();
+        try {
+          c.rts = await matchCompany(c, tagged, api);
+        } catch (err) {
+          rtsStatus(err.message);
+          stopRequested = true; // an RTS error (logged out, rate limit) should stop the run, not mislabel companies
+          return;
+        }
+        rtsStatus(`Matched ${++done} of ${todo.length}…`);
+      }
+    };
+    await Promise.all(Array.from({ length: 3 }, worker));
+    renderResults();
+    renderRtsSummary();
+    persist();
+  } catch (err) {
+    rtsStatus(err.message);
+  } finally {
+    $('match').disabled = false;
+    $('stopRts').hidden = true;
+  }
+};
+
+function renderRtsSummary() {
+  const n = (s) => companies.filter((c) => c.rts?.status === s).length;
+  const k = (s) => scrub.filter((x) => x.status === s).length;
+  const rows = [
+    ['Source companies', companies.length],
+    ['Already tagged in RTS', n('already_tagged')],
+    ['Safe to tag (domain + name agree)', n('tag')],
+    ['Needs your review', n('review')],
+    ['No RTS profile found (activity log)', n('create_log')],
+    ['Not matched yet', companies.filter((c) => !c.rts).length],
+  ];
+  if (scrub.length) rows.push([`Tagged in RTS (${taggedTotal}): still in source`, k('still_listed')], ['…verify manually', k('verify')], ['…not in source list', k('not_in_source')]);
+  $('rtsSummary').innerHTML = rows.map(([label, v]) => `<tr><td>${label}</td><td>${v}</td></tr>`).join('');
+}
+
+// ---- cache: the last run is kept in the browser and can be exported / re-imported as JSON ----
+const snapshot = () => ({ version: 1, savedAt: new Date().toISOString(), eventId: $('eventId').value.trim(), taggedTotal, companies, scrub });
+
+function persist() {
+  chrome.storage.local.set({ lastSession: snapshot() });
+}
+
+function restore(data) {
+  if (data?.version !== 1) return;
+  companies = data.companies;
+  scrub = data.scrub ?? [];
+  taggedTotal = data.taggedTotal ?? 0;
+  $('eventId').value = data.eventId ?? '';
+  $('resultsSection').hidden = false;
+  $('rtsSection').hidden = false;
+  renderResults();
+  renderRtsSummary();
+}
+
+chrome.storage.local.get('lastSession').then(({ lastSession }) => lastSession && restore(lastSession));
+
+$('saveCache').onclick = () => {
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([JSON.stringify(snapshot(), null, 2)], { type: 'application/json' })),
+    download: `exhibitor-tagger-event-${$('eventId').value || 'unknown'}.json`,
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+$('loadCache').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (file) restore(JSON.parse(await file.text()));
+};
+
 // ---- export ----
 $('export').onclick = () => {
-  const head = ['Company', 'Country', 'Website', 'Status', 'Confidence', 'Reason', 'QA verdict', 'QA score', 'QA notes', 'Source'];
-  const csv = [head, ...companies.map((c) => [c.name, c.country, c.website, c.status, c.confidence.toFixed(2), c.reason, c.qa?.verdict ?? '', c.qa?.score ?? '', c.qa?.reasons.join('; ') ?? '', c.source])]
+  const head = ['Company', 'Country', 'Website', 'Status', 'Confidence', 'Reason', 'QA verdict', 'QA score', 'QA notes', 'RTS status', 'RTS entity', 'RTS entity ID', 'RTS score', 'Source'];
+  const csv = [head, ...companies.map((c) => [c.name, c.country, c.website, c.status, c.confidence.toFixed(2), c.reason, c.qa?.verdict ?? '', c.qa?.score ?? '', c.qa?.reasons.join('; ') ?? '', c.rts?.status ?? '', c.rts?.entityName ?? '', c.rts?.entityId ?? '', c.rts?.score ?? '', c.source])]
     .map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
     .join('\n');
   const a = Object.assign(document.createElement('a'), {

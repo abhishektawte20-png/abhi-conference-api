@@ -43,6 +43,22 @@
     <table id="results"></table>
   </section>
 
+  <section id="rtsSection" hidden>
+    <h2>4. Check against RTS (read-only)</h2>
+    <label>Conference event ID <input id="eventId" placeholder="open the event in RTS, or type the ID"></label>
+    <div class="bar">
+      <button id="scrub">1. Scrub tagged list</button>
+      <button id="match" class="primary">2. Match companies</button>
+      <button id="stopRts" hidden>Stop</button>
+    </div>
+    <p id="rtsStatus"></p>
+    <table id="rtsSummary"></table>
+    <div class="bar">
+      <button id="saveCache">Export cache (JSON)</button>
+      <label class="inline">Load cache <input type="file" id="loadCache" accept=".json"></label>
+    </div>
+  </section>
+
   <script src="vendor/xlsx.full.min.js"></script>
   <script type="module" src="sidepanel.js"></script>
 </body>
