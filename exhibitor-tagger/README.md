@@ -18,11 +18,13 @@ Tagging in RTS and activity-log creation are not built yet.
    Click the toolbar icon, open Settings, enter the proxy URL and token.
 3. Upload a sheet → check the column mapping → Load companies → Find missing websites → Export CSV.
 
+**QA layer:** after the model picks a site, the proxy fetches it and checks it independently: the domain resolves, it isn't a parked/for-sale page, the company name appears in the title/headings/domain, and the country doesn't contradict. A site is only "found" if the model is 70%+ confident *and* QA verifies it. Parked or dead domains are rejected; unverifiable ones (bot-blocking) go to review. Set `QA=off` in `.env` to disable.
+
 Websites with confidence under 70% show as "low" so you can review them; the website cell is editable.
 
 ## Tests
 
 ```
-cd extension && node --test test/
-cd server && node --test test/
+cd extension && node --test test/*.test.mjs
+cd server && node --test test/*.test.mjs
 ```

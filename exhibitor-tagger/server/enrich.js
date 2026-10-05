@@ -1,5 +1,7 @@
 // Find a company's official website: web search for candidates, then Claude picks one.
 
+import { verifyWebsite } from './verify.js';
+
 const BLOCKED_HOSTS = [
   'linkedin.com', 'facebook.com', 'instagram.com', 'twitter.com', 'x.com', 'youtube.com',
   'wikipedia.org', 'crunchbase.com', 'bloomberg.com', 'zoominfo.com', 'dnb.com', 'opencorporates.com',
@@ -77,7 +79,7 @@ async function pick(company, results, { fetchImpl, env }) {
 }
 
 /** Returns { website, confidence, reason, status } where status is 'found' | 'low' | 'none' | 'error'. */
-export async function enrichCompany(company, { fetchImpl = fetch, env = process.env } = {}) {
+export async function enrichCompany(company, { fetchImpl = fetch, pageFetch = fetch, env = process.env } = {}) {
   try {
     const results = await search(company, { fetchImpl, env });
     if (!results.length) return { website: '', confidence: 0, reason: 'no search results', status: 'none' };
@@ -89,11 +91,20 @@ export async function enrichCompany(company, { fetchImpl = fetch, env = process.
     if (!match) return { website: '', confidence: 0, reason: answer.reason || 'no match', status: 'none' };
 
     const confidence = Math.max(0, Math.min(1, Number(answer.confidence) || 0));
+    const website = `https://${match.host}`;
+    if (env.QA === 'off') {
+      return { website, confidence, reason: answer.reason ?? '', status: confidence >= 0.7 ? 'found' : 'low' };
+    }
+
+    // QA layer: look at the site itself. A first-pass answer is only 'found' if QA agrees.
+    const qa = await verifyWebsite(company, website, { fetchImpl: pageFetch });
+    if (qa.verdict === 'rejected') return { website: '', confidence: 0, reason: `QA rejected ${match.host}: ${qa.reasons[0]}`, status: 'none', qa };
     return {
-      website: `https://${match.host}`,
-      confidence,
+      website,
+      confidence: Math.round(Math.min(confidence, qa.score) * 100) / 100,
       reason: answer.reason ?? '',
-      status: confidence >= 0.7 ? 'found' : 'low',
+      status: confidence >= 0.7 && qa.verdict === 'verified' ? 'found' : 'low',
+      qa,
     };
   } catch (err) {
     return { website: '', confidence: 0, reason: err.message, status: 'error' };

@@ -118,18 +118,20 @@ $('enrich').onclick = async () => {
 
 const summary = () => {
   const n = (s) => companies.filter((c) => c.status === s).length;
-  return `${n('given')} given · ${n('found')} found · ${n('low')} need review · ${n('none')} not found · ${n('error')} errors`;
+  const qa = (v) => companies.filter((c) => c.qa?.verdict === v).length;
+  return `${n('given')} given · ${n('found')} found · ${n('low')} need review · ${n('none')} not found · ${n('error')} errors · QA: ${qa('verified')} verified, ${qa('review')} review`;
 };
 
 function renderResults() {
   $('results').innerHTML =
-    '<tr><th>Company</th><th>Website</th><th>Status</th></tr>' +
+    '<tr><th>Company</th><th>Website</th><th>Status</th><th>QA</th></tr>' +
     companies
       .map(
         (c, i) =>
           `<tr><td>${esc(c.name)}<br><small>${esc(c.country)}</small></td>` +
           `<td><input data-i="${i}" value="${esc(c.website)}"></td>` +
-          `<td class="${c.status}" title="${esc(c.reason)}">${c.status}${c.status === 'found' || c.status === 'low' ? ` ${Math.round(c.confidence * 100)}%` : ''}</td></tr>`,
+          `<td class="${c.status}" title="${esc(c.reason)}">${c.status}${c.status === 'found' || c.status === 'low' ? ` ${Math.round(c.confidence * 100)}%` : ''}</td>` +
+          `<td class="${c.qa?.verdict ?? ''}" title="${esc(c.qa?.reasons.join('; ') ?? '')}">${esc(c.qa?.verdict ?? '')}</td></tr>`,
       )
       .join('');
   $('results').querySelectorAll('input').forEach((input) => {
@@ -146,8 +148,8 @@ function renderResults() {
 
 // ---- export ----
 $('export').onclick = () => {
-  const head = ['Company', 'Country', 'Website', 'Status', 'Confidence', 'Reason', 'Source'];
-  const csv = [head, ...companies.map((c) => [c.name, c.country, c.website, c.status, c.confidence.toFixed(2), c.reason, c.source])]
+  const head = ['Company', 'Country', 'Website', 'Status', 'Confidence', 'Reason', 'QA verdict', 'QA score', 'QA notes', 'Source'];
+  const csv = [head, ...companies.map((c) => [c.name, c.country, c.website, c.status, c.confidence.toFixed(2), c.reason, c.qa?.verdict ?? '', c.qa?.score ?? '', c.qa?.reasons.join('; ') ?? '', c.source])]
     .map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
     .join('\n');
   const a = Object.assign(document.createElement('a'), {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { enrichCompany } from '../enrich.js';
 import { createServer } from '../server.js';
 
-const env = { SERPER_API_KEY: 's', ANTHROPIC_API_KEY: 'a', PROXY_TOKEN: 'tok' };
+const env = { SERPER_API_KEY: 's', ANTHROPIC_API_KEY: 'a', PROXY_TOKEN: 'tok', QA: 'off' };
 const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body });
 
 // Fake Serper + Anthropic. `answer` is what Claude "returns".
@@ -56,4 +56,50 @@ test('server enforces token and batch size, and enriches', async () => {
   const ok = await post({ companies: [{ id: '1', name: 'a' }, { id: '2', name: 'b' }] }, 'tok');
   assert.deepEqual((await ok.json()).results.map((r) => [r.id, r.website]), [['1', 'https://a.com'], ['2', 'https://b.com']]);
   server.close();
+});
+
+// ---- QA layer ----
+const page = (html, url = 'https://acme.com/', status = 200) => async () => ({ ok: status < 200 || status >= 300 ? false : true, status, url, text: async () => html });
+const qaEnv = { ...env, QA: 'on' };
+const good = fakeFetch(organic, { domain: 'acme.com', confidence: 0.95, reason: 'own domain' });
+const run = (pageFetch, company = { name: 'Acme Ltd', country: 'UK' }) => enrichCompany(company, { env: qaEnv, fetchImpl: good, pageFetch });
+
+test('QA verifies when the page names the company', async () => {
+  const r = await run(page('<title>Acme | Industrial pumps</title><h1>Acme Ltd</h1>'));
+  assert.equal(r.status, 'found');
+  assert.equal(r.qa.verdict, 'verified');
+});
+
+test('QA rejects a parked domain even if the model was confident', async () => {
+  const r = await run(page('<title>acme.com</title>This domain is for sale. Buy this domain today.'));
+  assert.deepEqual([r.website, r.status], ['', 'none']);
+  assert.match(r.reason, /parked/);
+});
+
+test('QA rejects a domain that does not resolve', async () => {
+  const r = await run(async () => { throw Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } }); });
+  assert.equal(r.status, 'none');
+});
+
+test('QA sends a page that does not mention the company to review', async () => {
+  const r = await run(page('<title>Totally Different Corp</title><h1>Welcome</h1>'), { name: 'Zebra Quartz Holdings' });
+  assert.deepEqual([r.status, r.qa.verdict], ['low', 'review']);
+});
+
+test('bot-blocking (403) is unverifiable, not rejected', async () => {
+  const r = await run(page('', 'https://acme.com/', 403), { name: 'Zebra Quartz Holdings' });
+  assert.equal(r.status, 'low');
+  assert.equal(r.qa.verdict, 'review');
+});
+
+test('domain matching the company name verifies even when the page is blocked', async () => {
+  const r = await run(page('', 'https://acme.com/', 403));
+  assert.equal(r.qa.verdict, 'verified');
+});
+
+test('wrong-country TLD lowers the score', async () => {
+  const f = fakeFetch([{ title: 'Acme', link: 'https://acme.de/', snippet: '' }], { domain: 'acme.de', confidence: 0.95, reason: '' });
+  const r = await enrichCompany({ name: 'Acme Sdn Bhd', country: 'Malaysia' }, { env: qaEnv, fetchImpl: f, pageFetch: page('<title>Acme GmbH</title>', 'https://acme.de/') });
+  assert.ok(r.qa.reasons.some((x) => /\.de domain but company is in Malaysia/.test(x)));
+  assert.ok(r.qa.score < 0.9);
 });
