@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { domainLabel, normName, pairScore, classify, searchTerms, scrubTagged, matchCompany } from '../lib/match.js';
+import { evaluateCompany, domainLabel, normName, pairScore, classify, searchTerms, scrubTagged, matchCompany } from '../lib/match.js';
 
 const ent = (id, formalName, url, extra = {}) => ({ attendeeEntityId: id, formalName, url, nameVariations: [], exhibitor: false, sponsor: false, ...extra });
 
@@ -79,4 +79,15 @@ test('already in the tagged list is found without searching', async () => {
   const api = { search: async () => { throw new Error('should not search'); } };
   const r = await matchCompany({ name: 'Akamai Technologies Inc', website: 'https://akamai.com' }, tagged, api);
   assert.equal(r.status, 'already_tagged');
+});
+
+test('evaluateCompany runs both routes independently', async () => {
+  const tagged = [ent(1, 'Akamai Technologies', 'www.akamai.com', { sponsor: true })];
+  const api = { search: async () => [ent(1, 'Akamai Technologies', 'www.akamai.com', { sponsor: true })] };
+  const r = await evaluateCompany({ name: 'Akamai', website: 'https://akamai.com' }, tagged, api);
+  assert.deepEqual([r.viaTagged.tier, r.viaSearch.tier, r.viaTagged.id, r.viaSearch.id], ['match', 'match', 1, 1]);
+  assert.ok(r.viaSearch.searches >= 1);
+  // search route must not peek at the tagged list: with an empty search pool it finds nothing
+  const blind = await evaluateCompany({ name: 'Akamai', website: 'https://akamai.com' }, tagged, { search: async () => [] });
+  assert.deepEqual([blind.viaTagged.tier, blind.viaSearch.tier], ['match', 'none']);
 });

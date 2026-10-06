@@ -189,3 +189,21 @@ function summary(c) {
     reasons: c.reasons,
   };
 }
+
+const brief = (c) => ({ tier: c.tier, id: c.best?.attendeeEntityId ?? null, name: c.best?.formalName ?? '', score: c.score ?? 0, reasons: c.reasons });
+
+/**
+ * Phase 0 evaluation (read-only). Runs the two independent routes for one company:
+ *   viaTagged - match against the event's tagged list
+ *   viaSearch - match through RTS search, ignoring the tagged list (what "tag" would see on an untagged event)
+ * Comparing them on an already-finished event shows how often the search route finds the right entity.
+ */
+export async function evaluateCompany(company, tagged, api) {
+  const terms = searchTerms(company);
+  const pool = new Map();
+  for (const term of terms) for (const e of await api.search(term)) pool.set(e.attendeeEntityId, e);
+  return {
+    viaTagged: brief(classify(company, tagged)),
+    viaSearch: { ...brief(classify(company, [...pool.values()])), searches: terms.length },
+  };
+}

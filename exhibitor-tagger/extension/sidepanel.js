@@ -1,5 +1,5 @@
 import { analyzeSheet, extractCompanies, normalizeWebsite } from './lib/mapping.js';
-import { matchCompany, scrubTagged } from './lib/match.js';
+import { evaluateCompany, matchCompany, scrubTagged } from './lib/match.js';
 import { eventIdFromUrl, findRtsTab, rtsApi } from './lib/rts-client.js';
 
 const $ = (id) => document.getElementById(id);
@@ -12,6 +12,7 @@ let companies = [];
 let stopRequested = false;
 let scrub = [];
 let taggedTotal = 0;
+let evaluation = null;
 
 // ---- settings ----
 chrome.storage.local.get(['proxyUrl', 'proxyToken']).then(({ proxyUrl, proxyToken }) => {
@@ -223,6 +224,55 @@ $('match').onclick = async () => {
     $('match').disabled = false;
     $('stopRts').hidden = true;
   }
+};
+
+// Phase 0: compare matching through the tagged list vs through search, on an event that is already tagged.
+$('evalRun').onclick = async () => {
+  try {
+    const { eventId, api } = await connect();
+    rtsStatus('Reading the event\'s tagged list…');
+    const tagged = await api.allTagged();
+    const todo = companies.filter((c) => c.name);
+    const rows = [];
+    stopRequested = false;
+    $('stopRts').hidden = false;
+    const queue = [...todo];
+    const worker = async () => {
+      while (queue.length && !stopRequested) {
+        const c = queue.shift();
+        try {
+          rows.push({ name: c.name, country: c.country, website: c.website, sourceSheet: c.source, enrichStatus: c.status, qaVerdict: c.qa?.verdict ?? '', ...(await evaluateCompany(c, tagged.entries, api)) });
+        } catch (err) {
+          rtsStatus(err.message);
+          stopRequested = true;
+          return;
+        }
+        rtsStatus(`Evaluated ${rows.length} of ${todo.length}…`);
+      }
+    };
+    await Promise.all(Array.from({ length: 3 }, worker));
+    $('stopRts').hidden = true;
+    evaluation = {
+      version: 1,
+      kind: 'phase0-evaluation',
+      eventId,
+      completed: !stopRequested,
+      tagged: tagged.entries.map(({ attendeeEntityId, formalName, nameVariations, url, exhibitor, sponsor }) => ({ attendeeEntityId, formalName, nameVariations, url, exhibitor, sponsor })),
+      companies: rows,
+    };
+    rtsStatus(`Evaluation ${evaluation.completed ? 'finished' : 'stopped early'}: ${rows.length} companies. Export it and run eval/report.mjs.`);
+  } catch (err) {
+    rtsStatus(err.message);
+  }
+};
+$('evalExport').onclick = () => {
+  if (!evaluation) return rtsStatus('Run the evaluation first.');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([JSON.stringify(evaluation, null, 2)], { type: 'application/json' })),
+    download: `eval-event-${evaluation.eventId}.json`,
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
 };
 
 function renderRtsSummary() {

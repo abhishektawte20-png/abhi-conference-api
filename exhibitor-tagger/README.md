@@ -26,9 +26,39 @@ exported/imported as JSON. Tagging and activity-log creation are not built yet.
 
 Websites with confidence under 70% show as "low" so you can review them; the website cell is editable.
 
+## Phase 0: measure accuracy on a finished event (read-only)
+
+1. Open a past event in RTS whose tagged list you trust. Load the source sheet it was built from in the side panel
+   (optionally run "Find missing websites" first: enrichment is part of what is being measured).
+2. **Run evaluation (read-only)**. For every company it runs two independent routes: matching against the event's
+   tagged list, and matching through RTS search as if the event were untagged. **Export evaluation JSON.**
+3. `node eval/report.mjs eval-event-<id>.json` writes `eval/out/report.md`, `disagreements.csv` and `label_sample.csv`.
+   Exports contain PitchBook data: keep them local (`eval/data/` and `eval/out/` are git-ignored).
+4. Fill `human_label` (correct / incorrect) in `label_sample.csv` for the rows where search says "match" but the event
+   does not have the entity, plus any conflicts. Re-run with `--labels label_sample.csv` to get precision.
+5. Thresholds are untuned defaults. Tune only on the report's "tune half" and confirm on the "held-out half".
+
+The two routes share the matcher's own name/domain logic, so agreement is a consistency check, not proof. Precision
+numbers come from the human labels.
+
+## Guardrails (apply to every phase)
+
+Read-only until tagging is built. When it is: never replay the raw event `PUT` (use the page's own checkboxes and Save),
+additive only (never un-tag), two independent signals to auto-tag, idempotent reruns, dry run + per-batch approval,
+batches of 5 followed by a re-read and diff of the tagged list (halt on any surprise), hard cap and Stop button,
+stop on any RTS error, at most 3 concurrent RTS requests, and a persisted audit log. No cookies, tokens or PitchBook
+data in the repo, logs or fixtures.
+
+## Cache format
+
+`chrome.storage.local.lastSession` and the exported JSON: `{ version: 1, savedAt, eventId, taggedTotal, companies[], scrub[] }`.
+Each company carries `name, country, website, source, status/confidence/reason` (enrichment), `qa`, and `rts`
+(`status, entityId, entityName, score, reasons, candidates[]`). The audit log will be added with the first write feature.
+
 ## Tests
 
 ```
 cd extension && node --test test/*.test.mjs
 cd server && node --test test/*.test.mjs
+node --test eval/report.test.mjs
 ```
