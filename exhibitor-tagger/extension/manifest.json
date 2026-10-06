@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Exhibitor Tagger",
+  "version": "0.1.0",
+  "description": "Upload an exhibitor/sponsor list, map columns and enrich missing websites.",
+  "permissions": [
+    "sidePanel",
+    "storage"
+  ],
+  "action": {
+    "default_title": "Exhibitor Tagger"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "https://rts.pitchbook.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://rts.pitchbook.com/*"
+      ],
+      "js": [
+        "rts-content.js"
+      ]
+    }
+  ]
+}
